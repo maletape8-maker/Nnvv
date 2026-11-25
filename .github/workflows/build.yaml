@@ -1,0 +1,180 @@
+name: build-SGZZ9
+on:
+  workflow_dispatch:
+  push:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Écrire le code
+        run: |
+          cat > SGZZ9.mm <<'EOF'
+          #import <UIKit/UIKit.h>
+          #import <Foundation/Foundation.h>
+          #import <CoreGraphics/CoreGraphics.h>
+          #import <QuartzCore/QuartzCore.h>
+
+          #define SRC @"jake_outfit1_tex_low_3"
+          #define DST @"jake_outfit1_tex_low"
+          #define OFFKEY @"sgzz9_off"
+
+          static NSString *gStatus = @"Pas encore lancé.";
+          static UIButton *btn = nil;
+
+          static NSString *docsPath() {
+            return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+          }
+
+          static NSString *findFile(NSString *root, NSString *name) {
+            NSFileManager *fm = [NSFileManager defaultManager];
+            NSDirectoryEnumerator *en = [fm enumeratorAtPath:root];
+            for (NSString *p in en) {
+              if ([p hasPrefix:@"SGZZ9_backup"]) { [en skipDescendants]; continue; }
+              if ([[p lastPathComponent] isEqualToString:name]) {
+                NSString *full = [root stringByAppendingPathComponent:p];
+                BOOL isDir = NO;
+                if ([fm fileExistsAtPath:full isDirectory:&isDir] && !isDir) return full;
+              }
+            }
+            return nil;
+          }
+
+          static NSString *applyMod() {
+            NSFileManager *fm = [NSFileManager defaultManager];
+            NSString *docs = docsPath();
+            NSString *bundle = [[NSBundle mainBundle] bundlePath];
+            NSString *src = findFile(bundle, SRC);
+            if (!src) src = findFile(bundle, DST);
+            if (!src) src = findFile(docs, SRC);
+            if (!src) return @"Skin introuvable dans l’app : mets jake_outfit1_tex_low_3 dans Payload/Jeu.app/Data/";
+            NSString *dst = findFile(docs, DST);
+            if (!dst) return @"Fichier du jeu introuvable : jake_outfit1_tex_low. Lance le jeu une fois pour qu’il le télécharge, puis appuie sur Refaire.";
+            NSData *d = [NSData dataWithContentsOfFile:src];
+            if (d.length == 0) return @"Le skin est vide.";
+            NSData *cur = [NSData dataWithContentsOfFile:dst];
+            if ([cur isEqualToData:d]) return @"Déjà appliqué.";
+            NSString *bk = [docs stringByAppendingPathComponent:@"SGZZ9_backup"];
+            [fm createDirectoryAtPath:bk withIntermediateDirectories:YES attributes:nil error:nil];
+            NSString *bf = [bk stringByAppendingPathComponent:DST];
+            if (![fm fileExistsAtPath:bf]) [fm copyItemAtPath:dst toPath:bf error:nil];
+            [fm removeItemAtPath:dst error:nil];
+            NSError *e = nil;
+            if (![d writeToFile:dst options:NSDataWritingAtomic error:&e])
+              return [NSString stringWithFormat:@"Écriture impossible : %@", e.localizedDescription];
+            return [NSString stringWithFormat:@"OK : ancien fichier supprimé, %lu octets copiés sur %@. Relance le jeu si le skin ne change pas.", (unsigned long)d.length, DST];
+          }
+
+          static NSString *restoreMod() {
+            NSFileManager *fm = [NSFileManager defaultManager];
+            NSString *docs = docsPath();
+            NSString *bf = [[docs stringByAppendingPathComponent:@"SGZZ9_backup"] stringByAppendingPathComponent:DST];
+            if (![fm fileExistsAtPath:bf]) return @"Aucune sauvegarde de l’original.";
+            NSString *dst = findFile(docs, DST);
+            if (!dst) return @"Fichier cible introuvable.";
+            NSData *d = [NSData dataWithContentsOfFile:bf];
+            NSError *e = nil;
+            if (![d writeToFile:dst options:NSDataWritingAtomic error:&e])
+              return [NSString stringWithFormat:@"Écriture impossible : %@", e.localizedDescription];
+            return @"Original restauré. Relance le jeu.";
+          }
+
+          static UIWindow *keyWin() {
+            for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
+              if ([s isKindOfClass:[UIWindowScene class]]) {
+                for (UIWindow *w in ((UIWindowScene *)s).windows) if (w.isKeyWindow) return w;
+              }
+            }
+            return UIApplication.sharedApplication.windows.firstObject;
+          }
+
+          static UIViewController *topVC() {
+            UIViewController *v = keyWin().rootViewController;
+            while (v.presentedViewController) v = v.presentedViewController;
+            return v;
+          }
+
+          @interface SGHandler : NSObject
+          + (instancetype)shared;
+          - (void)tap;
+          - (void)pan:(UIPanGestureRecognizer *)g;
+          @end
+
+          @implementation SGHandler
+          + (instancetype)shared {
+            static SGHandler *s; static dispatch_once_t o;
+            dispatch_once(&o, ^{ s = [SGHandler new]; });
+            return s;
+          }
+          - (void)tap {
+            UIViewController *vc = topVC();
+            if (!vc) return;
+            UIAlertController *a = [UIAlertController alertControllerWithTitle:@"SGZZ9" message:gStatus preferredStyle:UIAlertControllerStyleAlert];
+            [a addAction:[UIAlertAction actionWithTitle:@"Refaire" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) {
+              [[NSUserDefaults standardUserDefaults] setBool:NO forKey:OFFKEY];
+              gStatus = applyMod();
+              [self tap];
+            }]];
+            [a addAction:[UIAlertAction actionWithTitle:@"Restaurer l’original" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) {
+              [[NSUserDefaults standardUserDefaults] setBool:YES forKey:OFFKEY];
+              gStatus = restoreMod();
+              [self tap];
+            }]];
+            [a addAction:[UIAlertAction actionWithTitle:@"Fermer" style:UIAlertActionStyleCancel handler:nil]];
+            [vc presentViewController:a animated:YES completion:nil];
+          }
+          - (void)pan:(UIPanGestureRecognizer *)g {
+            CGPoint t = [g translationInView:btn.superview];
+            btn.center = CGPointMake(btn.center.x + t.x, btn.center.y + t.y);
+            [g setTranslation:CGPointMake(0, 0) inView:btn.superview];
+          }
+          @end
+
+          static void showButton() {
+            if (btn) return;
+            UIWindow *w = keyWin();
+            if (!w) {
+              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ showButton(); });
+              return;
+            }
+            btn = [UIButton buttonWithType:UIButtonTypeSystem];
+            btn.frame = CGRectMake(12, 90, 44, 44);
+            btn.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+            btn.layer.cornerRadius = 22;
+            [btn setTitle:@"SG" forState:UIControlStateNormal];
+            [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            [btn addTarget:[SGHandler shared] action:@selector(tap) forControlEvents:UIControlEventTouchUpInside];
+            [btn addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:[SGHandler shared] action:@selector(pan:)]];
+            [w addSubview:btn];
+          }
+
+          __attribute__((constructor))
+          static void sgzz9_init() {
+            if ([[NSUserDefaults standardUserDefaults] boolForKey:OFFKEY]) gStatus = @"Désactivé (original restauré).";
+            else gStatus = applyMod();
+            [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
+                                                              object:nil
+                                                               queue:[NSOperationQueue mainQueue]
+                                                          usingBlock:^(NSNotification *n) { showButton(); }];
+          }
+          EOF
+      - name: Compiler
+        run: |
+          xcrun -sdk iphoneos clang++ -std=c++17 -fobjc-arc -arch arm64 \
+            -miphoneos-version-min=13.0 -Wno-deprecated-declarations -dynamiclib \
+            -framework Foundation -framework UIKit -framework CoreGraphics -framework QuartzCore \
+            -install_name @executable_path/Frameworks/SGZZ9.dylib \
+            -o SGZZ9.dylib SGZZ9.mm
+      - name: Mettre le dylib dans le dépôt
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add SGZZ9.dylib
+          git commit -m "SGZZ9.dylib" || echo "rien à commit"
+          git push
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SGZZ9
+          path: SGZZ9.dylib
